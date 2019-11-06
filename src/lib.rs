@@ -59,6 +59,13 @@ pub fn ffindex_db_open(ffindex_path : String, ffdata_path : String) -> FFindexDB
 }
 
 
+/// get an index entry by index
+pub fn ffindex_get_entry_by_index<'a>(ffindex_db : &'a FFindexDB, index : usize) -> Option<&'a FFindexEntry>
+{
+    ffindex_db.entries.get(index)
+}
+
+
 /// get an index entry by name using binary search
 pub fn ffindex_get_entry_by_name<'a>(ffindex_db : &'a FFindexDB, key : String) -> Result<&'a FFindexEntry,usize>
 {

@@ -33,6 +33,7 @@ pub struct FFindexDB
 }
 
 
+/// load the index, assumed to be sorted
 pub fn load_index(ffindex_index_path:String) -> Vec<FFindexEntry>
 {
     let mut rdr = ReaderBuilder::new()
@@ -45,6 +46,7 @@ pub fn load_index(ffindex_index_path:String) -> Vec<FFindexEntry>
 }
 
 
+/// open index and data file
 pub fn ffindex_db_open(ffindex_path : String, ffdata_path : String) -> FFindexDB
 {
     FFindexDB
@@ -57,6 +59,7 @@ pub fn ffindex_db_open(ffindex_path : String, ffdata_path : String) -> FFindexDB
 }
 
 
+/// get an index entry by name using binary search
 pub fn ffindex_get_entry_by_name<'a>(ffindex_db : &'a FFindexDB, key : String) -> Result<&'a FFindexEntry,usize>
 {
     match ffindex_db.entries.binary_search_by(|entry| entry.name.cmp(&key))
@@ -67,6 +70,7 @@ pub fn ffindex_get_entry_by_name<'a>(ffindex_db : &'a FFindexDB, key : String) -
 }
 
 
+/// get the data associated with a name
 pub fn ffindex_get_data_by_name<'a>(ffindex_db : &'a FFindexDB, key : String) ->Option<&'a [u8]>
 {
     match ffindex_get_entry_by_name(ffindex_db, key)

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -14,6 +14,18 @@ use ffindexrs::{
     FFindexWriter, ffindex_db_open, ffindex_get_data_by_index, ffindex_get_data_by_name,
     load_index, sort_index_file,
 };
+
+/// How entry keys are derived when building a database.
+#[derive(Clone, Copy)]
+enum KeyMode
+{
+    /// the input file's base name (`build` default)
+    Basename,
+    /// a running integer 1, 2, 3, ...
+    Sequential,
+    /// the first whitespace-delimited token of a FASTA header
+    Header,
+}
 
 /// get the keys from a listfile (one key per line; extra tab-separated columns are ignored)
 pub fn get_keys_from_file(path: String) -> Vec<String>
@@ -111,19 +123,27 @@ fn ffindex_build(
     ffindex_path: String,
     append: bool,
     sort: bool,
+    key_mode: KeyMode,
     inputs: Vec<PathBuf>,
 )
 {
     let mut writer = FFindexWriter::create(&ffdata_path, &ffindex_path, append)
         .expect("could not create ffindex database");
 
+    let mut counter: u64 = 0;
     for path in expand_inputs(inputs)
     {
-        let name = path
-            .file_name()
-            .expect("input path has no file name")
-            .to_string_lossy()
-            .to_string();
+        counter += 1;
+        let name = match key_mode
+        {
+            KeyMode::Sequential => counter.to_string(),
+            // Basename is the default; Header is rejected for `build` by clap.
+            _ => path
+                .file_name()
+                .expect("input path has no file name")
+                .to_string_lossy()
+                .to_string(),
+        };
         let content = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
         writer.insert(&name, &content).expect("insert entry");
     }
@@ -136,7 +156,19 @@ fn ffindex_build(
     }
 }
 
-fn ffindex_from_fasta(ffdata_path: String, ffindex_path: String, sort: bool, fasta_path: String)
+/// The first whitespace-delimited token of a FASTA header line (leading '>' removed).
+fn header_token(line: &str) -> String
+{
+    line[1..].split_whitespace().next().unwrap_or("").to_string()
+}
+
+fn ffindex_from_fasta(
+    ffdata_path: String,
+    ffindex_path: String,
+    sort: bool,
+    key_mode: KeyMode,
+    fasta_path: String,
+)
 {
     use std::io::{BufRead, BufReader};
 
@@ -148,15 +180,21 @@ fn ffindex_from_fasta(ffdata_path: String, ffindex_path: String, sort: bool, fas
 
     let mut current: Vec<u8> = Vec::new();
     let mut counter: u64 = 0;
+    let mut header: Option<String> = None;
 
-    let flush = |writer: &mut FFindexWriter, current: &mut Vec<u8>, counter: &mut u64| {
-        if !current.is_empty()
+    // Pick a key for the record we are about to flush, falling back to the
+    // running counter when a header is missing or empty.
+    let key_for = |key_mode: KeyMode, counter: &mut u64, header: Option<String>| -> String {
+        *counter += 1;
+        match key_mode
         {
-            *counter += 1;
-            writer
-                .insert(&counter.to_string(), current)
-                .expect("insert fasta entry");
-            current.clear();
+            KeyMode::Header => match header
+            {
+                Some(h) if !h.is_empty() => h,
+                _ => counter.to_string(),
+            },
+            // Basename is rejected for `from_fasta` by clap; treat as sequential.
+            _ => counter.to_string(),
         }
     };
 
@@ -165,12 +203,22 @@ fn ffindex_from_fasta(ffdata_path: String, ffindex_path: String, sort: bool, fas
         let line = line.expect("read fasta line");
         if line.starts_with('>')
         {
-            flush(&mut writer, &mut current, &mut counter);
+            if !current.is_empty()
+            {
+                let key = key_for(key_mode, &mut counter, header.take());
+                writer.insert(&key, &current).expect("insert fasta entry");
+                current.clear();
+            }
+            header = Some(header_token(&line));
         }
         current.extend_from_slice(line.as_bytes());
         current.push(b'\n');
     }
-    flush(&mut writer, &mut current, &mut counter);
+    if !current.is_empty()
+    {
+        let key = key_for(key_mode, &mut counter, header.take());
+        writer.insert(&key, &current).expect("insert fasta entry");
+    }
 
     writer.finish().expect("finish writing database");
 
@@ -205,33 +253,76 @@ fn ffindex_modify(ffindex_path: String, sort: bool, unlink: bool, keys: Vec<Stri
     }
 }
 
-fn ffindex_apply(ffdata_path: String, ffindex_path: String, program: Vec<String>)
+fn ffindex_apply(
+    ffdata_path: String,
+    ffindex_path: String,
+    program: Vec<String>,
+    out_ffdata: Option<String>,
+    out_ffindex: Option<String>,
+)
 {
     let ffindex_db = ffindex_db_open(ffindex_path, ffdata_path);
     let (cmd, args) = program.split_first().expect("no program given");
 
+    // When an output database is requested, capture each program's stdout into it.
+    let mut writer = match (out_ffdata, out_ffindex)
+    {
+        (Some(data), Some(index)) => Some(
+            FFindexWriter::create(&data, &index, false).expect("could not create output database"),
+        ),
+        _ => None,
+    };
+
     for index in 0..ffindex_db.entries().len()
     {
+        let name = ffindex_db.entries()[index].name().to_string();
         let data = match ffindex_get_data_by_index(&ffindex_db, index)
         {
-            Some(data) => strip_separator(data),
+            // own the bytes so they can move into the stdin-writer thread
+            Some(data) => strip_separator(data).to_vec(),
             None => continue,
         };
 
-        let mut child = Command::new(cmd)
-            .args(args)
-            .stdin(Stdio::piped())
+        let mut command = Command::new(cmd);
+        command.args(args).stdin(Stdio::piped());
+        if writer.is_some()
+        {
+            command.stdout(Stdio::piped());
+        }
+        let mut child = command
             .spawn()
             .unwrap_or_else(|e| panic!("spawn {}: {}", cmd, e));
 
-        child
-            .stdin
-            .take()
-            .expect("child stdin")
-            .write_all(data)
-            .expect("write to child stdin");
+        // Feed the entry on a separate thread to avoid deadlocking on large output.
+        let mut stdin = child.stdin.take().expect("child stdin");
+        let feeder = std::thread::spawn(move || {
+            let _ = stdin.write_all(&data);
+        });
 
-        child.wait().expect("wait for child");
+        match writer.as_mut()
+        {
+            Some(w) => {
+                let mut output = Vec::new();
+                child
+                    .stdout
+                    .take()
+                    .expect("child stdout")
+                    .read_to_end(&mut output)
+                    .expect("read child stdout");
+                feeder.join().expect("stdin feeder thread");
+                child.wait().expect("wait for child");
+                w.insert(&name, &output).expect("insert output entry");
+            }
+            None => {
+                feeder.join().expect("stdin feeder thread");
+                child.wait().expect("wait for child");
+            }
+        }
+    }
+
+    if let Some(w) = writer
+    {
+        w.finish().expect("finish output database");
     }
 }
 
@@ -300,6 +391,14 @@ fn main() -> io::Result<()>
                         .help("sort the index after building"),
                 )
                 .arg(
+                    Arg::new("key")
+                        .short('k')
+                        .long("key")
+                        .value_parser(["basename", "sequential"])
+                        .default_value("basename")
+                        .help("entry key source"),
+                )
+                .arg(
                     Arg::new("listfile")
                         .short('f')
                         .action(ArgAction::Append)
@@ -332,6 +431,14 @@ fn main() -> io::Result<()>
                         .short('s')
                         .action(ArgAction::SetTrue)
                         .help("sort the index after building"),
+                )
+                .arg(
+                    Arg::new("key")
+                        .short('k')
+                        .long("key")
+                        .value_parser(["header", "sequential"])
+                        .default_value("sequential")
+                        .help("entry key source"),
                 )
                 .arg(Arg::new("fasta").required(true).help("input FASTA file")),
         )
@@ -387,6 +494,18 @@ fn main() -> io::Result<()>
                         .help("index file"),
                 )
                 .arg(
+                    Arg::new("out_ffdata")
+                        .short('D')
+                        .requires("out_ffindex")
+                        .help("output data file (capture program stdout)"),
+                )
+                .arg(
+                    Arg::new("out_ffindex")
+                        .short('I')
+                        .requires("out_ffdata")
+                        .help("output index file (capture program stdout)"),
+                )
+                .arg(
                     Arg::new("program")
                         .required(true)
                         .num_args(1..)
@@ -400,19 +519,20 @@ fn main() -> io::Result<()>
 
     match matches.subcommand()
     {
-        Some(("get", sub)) =>
-        {
+        Some(("get", sub)) => {
             let keys = collect_keys(sub);
             ffindex_get(
-                sub.get_one::<String>("ffindex")
-                    .expect("ffindex")
-                    .to_string(),
+                sub.get_one::<String>("ffindex").expect("ffindex").to_string(),
                 sub.get_one::<String>("ffdata").expect("ffdata").to_string(),
                 keys,
             );
         }
-        Some(("build", sub)) =>
-        {
+        Some(("build", sub)) => {
+            let key_mode = match sub.get_one::<String>("key").map(String::as_str)
+            {
+                Some("sequential") => KeyMode::Sequential,
+                _ => KeyMode::Basename,
+            };
             let mut inputs: Vec<PathBuf> = sub
                 .get_many::<String>("listfile")
                 .map(|files| {
@@ -428,39 +548,37 @@ fn main() -> io::Result<()>
             }
             ffindex_build(
                 sub.get_one::<String>("ffdata").expect("ffdata").to_string(),
-                sub.get_one::<String>("ffindex")
-                    .expect("ffindex")
-                    .to_string(),
+                sub.get_one::<String>("ffindex").expect("ffindex").to_string(),
                 sub.get_flag("append"),
                 sub.get_flag("sort"),
+                key_mode,
                 inputs,
             );
         }
-        Some(("from_fasta", sub)) =>
-        {
+        Some(("from_fasta", sub)) => {
+            let key_mode = match sub.get_one::<String>("key").map(String::as_str)
+            {
+                Some("header") => KeyMode::Header,
+                _ => KeyMode::Sequential,
+            };
             ffindex_from_fasta(
                 sub.get_one::<String>("ffdata").expect("ffdata").to_string(),
-                sub.get_one::<String>("ffindex")
-                    .expect("ffindex")
-                    .to_string(),
+                sub.get_one::<String>("ffindex").expect("ffindex").to_string(),
                 sub.get_flag("sort"),
+                key_mode,
                 sub.get_one::<String>("fasta").expect("fasta").to_string(),
             );
         }
-        Some(("modify", sub)) =>
-        {
+        Some(("modify", sub)) => {
             let keys = collect_keys(sub);
             ffindex_modify(
-                sub.get_one::<String>("ffindex")
-                    .expect("ffindex")
-                    .to_string(),
+                sub.get_one::<String>("ffindex").expect("ffindex").to_string(),
                 sub.get_flag("sort"),
                 sub.get_flag("unlink"),
                 keys,
             );
         }
-        Some(("apply", sub)) =>
-        {
+        Some(("apply", sub)) => {
             let program: Vec<String> = sub
                 .get_many::<String>("program")
                 .expect("program")
@@ -468,10 +586,10 @@ fn main() -> io::Result<()>
                 .collect();
             ffindex_apply(
                 sub.get_one::<String>("ffdata").expect("ffdata").to_string(),
-                sub.get_one::<String>("ffindex")
-                    .expect("ffindex")
-                    .to_string(),
+                sub.get_one::<String>("ffindex").expect("ffindex").to_string(),
                 program,
+                sub.get_one::<String>("out_ffdata").map(|s| s.to_string()),
+                sub.get_one::<String>("out_ffindex").map(|s| s.to_string()),
             );
         }
         _ => unreachable!("arg_required_else_help guarantees a subcommand"),

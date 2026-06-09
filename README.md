@@ -43,15 +43,21 @@ their immediate files.
 * `-a` append to an existing database
 * `-s` sort the index after building
 * `-f FILE` a file listing input paths, one per line (repeatable)
+* `-k MODE` key source: `basename` (default) or `sequential` (1, 2, 3, ...)
 
 ### from_fasta — create a database from a FASTA file
 
 ```sh
 ffindex from_fasta -d seqs.ffdata -i seqs.ffindex -s input.fasta
+ffindex from_fasta -d seqs.ffdata -i seqs.ffindex -k header input.fasta
 ```
 
-Each record (header line plus its sequence lines) becomes one entry keyed by a
-running integer (`1`, `2`, ...).
+Each record (header line plus its sequence lines) becomes one entry.
+
+* `-s` sort the index after building
+* `-k MODE` key source: `sequential` (default; `1`, `2`, ...) or `header`
+  (the first whitespace-delimited token of the `>` header, falling back to the
+  running integer when the header is empty)
 
 ### get — extract records by key
 
@@ -78,10 +84,17 @@ Unlinking removes entries from the index only; the data file is left untouched.
 ### apply — run a program per entry
 
 ```sh
+# stream each program's output to stdout
 ffindex apply -d data.ffdata -i data.ffindex wc -c
+
+# capture each program's stdout into a new database, keeping the keys
+ffindex apply -d data.ffdata -i data.ffindex -D out.ffdata -I out.ffindex tr a-z A-Z
 ```
 
 For each entry, the program is run with the entry's payload piped to its stdin.
+
+* `-D FILE` / `-I FILE` write program output to a new data/index pair instead
+  of stdout, reusing each entry's key (both must be given together)
 
 ## Library
 

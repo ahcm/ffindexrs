@@ -61,7 +61,7 @@ pub fn load_index(ffindex_index_path: String) -> Vec<FFindexEntry>
     let mut rdr = ReaderBuilder::new()
         .has_headers(false)
         .delimiter(b'\t')
-        .flexible(true)
+        .flexible(false)
         .from_path(ffindex_index_path)
         .expect("reader");
 

@@ -3,6 +3,14 @@ name = "ffindexrs"
 version = "0.2.0"
 authors = ["andreas.hauser@lmu.de"]
 edition = "2018"
+description = "A Rust implementation of FFindex, a simple index/database for huge amounts of small files."
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/ahcm/ffindexrs"
+homepage = "https://github.com/ahcm/ffindexrs"
+documentation = "https://docs.rs/ffindexrs"
+keywords = ["ffindex", "database", "index", "bioinformatics", "flat-file"]
+categories = ["command-line-utilities", "database-implementations", "science"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

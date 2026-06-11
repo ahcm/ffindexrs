@@ -48,16 +48,6 @@ pub fn get_keys_from_file(path: String) -> Vec<String>
         .collect()
 }
 
-/// Drop a single trailing '\0' separator so output matches the original payload.
-fn strip_separator(data: &[u8]) -> &[u8]
-{
-    match data.last()
-    {
-        Some(0) => &data[..data.len() - 1],
-        _ => data,
-    }
-}
-
 /// Gather keys from the optional `-k`/`-f` arguments of a subcommand.
 fn collect_keys(submatches: &clap::ArgMatches) -> Vec<String>
 {
@@ -86,9 +76,7 @@ fn ffindex_get(ffindex_path: String, ffdata_path: String, keys: Vec<String>)
     {
         match ffindex_get_data_by_name(&ffindex_db, key.clone())
         {
-            Some(data) => out
-                .write_all(strip_separator(data))
-                .expect("write to stdout"),
+            Some(data) => out.write_all(data).expect("write to stdout"),
             None => eprintln!("ffindex: key not found: {}", key),
         }
     }
@@ -279,7 +267,7 @@ fn ffindex_apply(
         let data = match ffindex_get_data_by_index(&ffindex_db, index)
         {
             // own the bytes so they can move into the stdin-writer thread
-            Some(data) => strip_separator(data).to_vec(),
+            Some(data) => data.to_vec(),
             None => continue,
         };
 

@@ -105,7 +105,7 @@ pub fn ffindex_get_entry_by_name<'a>(
     }
 }
 
-/// get the raw data slice (including the trailing '\0' separator) for an entry
+/// get the payload for an entry (without the trailing '\0' C-string terminator)
 pub fn ffindex_get_data_by_entry<'a>(
     ffindex_db: &'a FFindexDB,
     entry: &FFindexEntry,
@@ -113,7 +113,7 @@ pub fn ffindex_get_data_by_entry<'a>(
 {
     ffindex_db
         .ffdata
-        .get(entry.offset..entry.offset + entry.length)
+        .get(entry.offset..entry.offset + entry.length.saturating_sub(1))
 }
 
 /// get the data associated with an index position
@@ -262,9 +262,9 @@ mod tests
         assert_eq!(db.entries()[0].name(), "apple");
 
         let apple = ffindex_get_data_by_name(&db, "apple".to_string()).unwrap();
-        assert_eq!(apple, b"red\n\0"); // includes trailing separator
+        assert_eq!(apple, b"red\n"); // trailing '\0' separator is stripped on read
         let banana = ffindex_get_data_by_name(&db, "banana".to_string()).unwrap();
-        assert_eq!(banana, b"yellow\n\0");
+        assert_eq!(banana, b"yellow\n");
         assert!(ffindex_get_data_by_name(&db, "cherry".to_string()).is_none());
 
         let _ = std::fs::remove_file(&data_path);
@@ -293,7 +293,7 @@ mod tests
         let db = ffindex_db_open(index_s.clone(), data_s.clone());
         assert_eq!(db.entries().len(), 2);
         let b = ffindex_get_data_by_name(&db, "b".to_string()).unwrap();
-        assert_eq!(b, b"two\0");
+        assert_eq!(b, b"two");
         // "a" is "one" + '\0' = 4 bytes, so "b" must start at offset 4
         assert_eq!(db.entries()[1].offset(), 4);
 

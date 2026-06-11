@@ -1,8 +1,9 @@
 [package]
 name = "ffindexrs"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["andreas.hauser@lmu.de"]
-edition = "2018"
+edition = "2024"
+rust-version = "1.85"
 description = "A Rust implementation of FFindex, a simple index/database for huge amounts of small files."
 license = "Apache-2.0"
 readme = "README.md"

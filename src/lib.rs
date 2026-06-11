@@ -1,12 +1,8 @@
+use csv::ReaderBuilder;
 use memmap::MmapOptions;
+use serde::Deserialize;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-
-extern crate csv;
-use csv::ReaderBuilder;
-
-#[macro_use]
-extern crate serde;
 
 pub fn mmap_file(filepath: String) -> memmap::Mmap
 {
@@ -82,19 +78,16 @@ pub fn ffindex_db_open(ffindex_path: String, ffdata_path: String) -> FFindexDB
 }
 
 /// get an index entry by index
-pub fn ffindex_get_entry_by_index<'a>(
-    ffindex_db: &'a FFindexDB,
-    index: usize,
-) -> Option<&'a FFindexEntry>
+pub fn ffindex_get_entry_by_index(ffindex_db: &FFindexDB, index: usize) -> Option<&FFindexEntry>
 {
     ffindex_db.entries.get(index)
 }
 
 /// get an index entry by name using binary search
-pub fn ffindex_get_entry_by_name<'a>(
-    ffindex_db: &'a FFindexDB,
+pub fn ffindex_get_entry_by_name(
+    ffindex_db: &FFindexDB,
     key: String,
-) -> Result<&'a FFindexEntry, usize>
+) -> Result<&FFindexEntry, usize>
 {
     match ffindex_db
         .entries
@@ -117,7 +110,7 @@ pub fn ffindex_get_data_by_entry<'a>(
 }
 
 /// get the data associated with an index position
-pub fn ffindex_get_data_by_index<'a>(ffindex_db: &'a FFindexDB, index: usize) -> Option<&'a [u8]>
+pub fn ffindex_get_data_by_index(ffindex_db: &FFindexDB, index: usize) -> Option<&[u8]>
 {
     match ffindex_get_entry_by_index(ffindex_db, index)
     {
@@ -127,7 +120,7 @@ pub fn ffindex_get_data_by_index<'a>(ffindex_db: &'a FFindexDB, index: usize) ->
 }
 
 /// get the data associated with a name
-pub fn ffindex_get_data_by_name<'a>(ffindex_db: &'a FFindexDB, key: String) -> Option<&'a [u8]>
+pub fn ffindex_get_data_by_name(ffindex_db: &FFindexDB, key: String) -> Option<&[u8]>
 {
     match ffindex_get_entry_by_name(ffindex_db, key)
     {

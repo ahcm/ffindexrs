@@ -4,10 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-extern crate clap;
 use clap::{Arg, ArgAction, Command as ClapCommand};
-
-extern crate csv;
 use csv::ReaderBuilder;
 
 use ffindexrs::{
